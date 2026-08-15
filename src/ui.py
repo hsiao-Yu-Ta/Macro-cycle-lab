@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -23,6 +24,7 @@ from .data import (
     merge_all_data,
 )
 from .model import run_model
+from .taiwan_decision_engine import build_official_history, latest_signal, local_cycle_engine, decide_action
 
 
 def render_sidebar(defaults: dict) -> dict:
@@ -359,3 +361,93 @@ def render_data_page(settings: dict):
         "TW_INDUSTRIAL_PRODUCTION, TW_MONEY_M1B, TW_PMI,\n"
         "US_LEI_PROXY, GLOBAL_SEMI"
     )
+
+
+def render_taiwan_official_page(settings: dict):
+    st.subheader("台股投資決策｜正式版")
+    st.caption("75% Macro / 25% Market｜Local Drawdown｜V3.1 Robustness Rules")
+
+    macro_path = Path("data/processed/taiwan_macro_inputs.csv")
+    ndc_path = Path("data/raw/ndc_business_cycle.xlsx")
+    if not macro_path.exists() or not ndc_path.exists():
+        st.error("正式版資料尚未就緒：請先執行 Macro Cycle Lab Official Refresh。")
+        return
+
+    try:
+        hist = build_official_history(macro_path, ndc_path)
+        sig = latest_signal(hist)
+        raw = pd.read_csv(macro_path, parse_dates=["date"]).sort_values("date")
+        market = raw.dropna(subset=["taiex_close"]).copy()
+        local = local_cycle_engine(market[["date", "taiex_close"]])
+    except Exception as exc:
+        st.error(f"正式模型載入失敗：{exc}")
+        return
+
+    if market.empty or local.empty:
+        st.error("TAIEX 資料不足。")
+        return
+
+    mkt = market.iloc[-1]
+    market_date = pd.Timestamp(mkt["date"])
+    market_price = float(mkt["taiex_close"])
+    current_dd = float(local.iloc[-1]["local_drawdown_pct"])
+    macro_date = pd.Timestamp(sig["date"])
+    regime = str(sig["macro_regime"])
+    action, confidence, rationale = decide_action(current_dd, regime)
+
+    labels = {
+        "NORMAL_DCA":"正常定投","OBSERVE":"觀察／保留彈藥","SMALL_ADD":"小額加碼",
+        "ADD":"加碼","AGGRESSIVE_ADD":"積極加碼","HEAVY_STAGED_ADD":"大幅分批加碼",
+        "FORCED_STAGED_ADD":"深熊強制分批",
+    }
+    tranches = {
+        "NORMAL_DCA":0,"OBSERVE":0,"SMALL_ADD":5,"ADD":10,
+        "AGGRESSIVE_ADD":15,"HEAVY_STAGED_ADD":20,"FORCED_STAGED_ADD":20,
+    }
+    gap=max(0,(market_date.year-macro_date.year)*12+market_date.month-macro_date.month)
+
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric("最新市場月份",market_date.strftime("%Y-%m"))
+    c2.metric("TAIEX",f"{market_price:,.0f}")
+    c3.metric("Local Drawdown",f"{current_dd:.1f}%")
+    c4.metric("Macro 資料截至",macro_date.strftime("%Y-%m"))
+
+    c1,c2,c3=st.columns(3)
+    c1.metric("Macro Regime",regime)
+    c2.metric("75/25 正式分數",f"{float(sig['official_score']):.2f}")
+    c3.metric("市場領先 Macro",f"{gap} 個月")
+
+    st.divider()
+    c1,c2,c3=st.columns([1.3,1,1])
+    with c1:
+        st.markdown("### 目前投資訊號")
+        st.markdown(f"## {labels[action]}")
+        st.write(rationale)
+    with c2:
+        st.markdown("### 信心")
+        st.markdown(f"## {confidence}")
+        st.caption("STRONG 為 V3.1 較穩健；TENTATIVE / WEAK 代表樣本較少。")
+    with c3:
+        st.markdown("### 單次建議")
+        st.markdown(f"## {tranches[action]}%")
+        st.caption("占『剩餘熊市預備金』，不是總資產。")
+
+    st.info("決策使用最新 TAIEX 回撤＋最後一個已完整公布並套用1個月發布延遲的 Macro regime。")
+
+    st.markdown("### 正式決策矩陣")
+    matrix=pd.DataFrame([
+        ["0~-15%","正常定投","正常定投","正常定投","不動用熊市彈藥"],
+        ["-15~-20%","觀察","小額加碼","小額加碼","觀察區"],
+        ["-20~-25%","觀察／保守","加碼","積極加碼","Macro辨識價值 STRONG"],
+        ["-25~-30%","開始加碼","積極加碼","積極加碼","價格機會 STRONG"],
+        ["-30~-35%","積極分批","大幅分批","大幅分批","避免一次All-in"],
+        ["≤-35%","深熊強制分批","強力分批","強力分批","Macro無否決權；不一次All-in"],
+    ],columns=["TAIEX回撤","Macro惡化","Macro築底","Macro復甦","說明"])
+    st.dataframe(matrix,hide_index=True,use_container_width=True)
+
+    st.markdown("### 最近 24 個已成熟 Macro 月份")
+    cols=["date","taiex_close","local_drawdown_pct","macro_regime","official_score",
+          "action_label_zh","confidence","suggested_tranche_pct_of_remaining_reserve"]
+    recent=hist[cols].dropna(subset=["official_score"]).tail(24).copy()
+    recent["date"]=recent["date"].dt.strftime("%Y-%m")
+    st.dataframe(recent,hide_index=True,use_container_width=True)
