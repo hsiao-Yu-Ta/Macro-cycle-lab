@@ -1,0 +1,44 @@
+name: Taiwan Macro Model Validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements_macro_validation.txt
+
+      - name: Fetch Taiwan official data
+        run: python fetch_taiwan_full.py
+
+      - name: Backtest Macro / Market weights
+        run: python backtest_taiwan_weights.py
+
+      - name: Show ranking
+        run: |
+          echo "===== Taiwan Macro Weight Ranking ====="
+          cat data/processed/taiwan_weight_backtest.csv
+
+      - name: Upload validation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: taiwan-macro-model-validation
+          path: |
+            data/processed/taiwan_macro_inputs.csv
+            data/processed/taiwan_weight_backtest.csv
+          retention-days: 30
