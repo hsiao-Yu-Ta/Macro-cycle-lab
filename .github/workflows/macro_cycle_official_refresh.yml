@@ -3,6 +3,9 @@ name: Macro Cycle Lab Official Refresh
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -11,6 +14,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -20,17 +25,23 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
           pip install -r requirements_macro_validation.txt
           pip install streamlit
 
       - name: Fetch latest Taiwan official data
-        run: python fetch_taiwan_full.py
+        run: |
+          python fetch_taiwan_full.py
 
       - name: Verify integrated official model
         run: |
           python - <<'PY'
-          from src.taiwan_decision_engine import build_official_history, latest_signal
+          from src.taiwan_decision_engine import (
+              build_official_history,
+              latest_signal,
+          )
 
           h = build_official_history(
               "data/processed/taiwan_macro_inputs.csv",
@@ -39,8 +50,10 @@ jobs:
 
           s = latest_signal(h)
 
+          print("===== MACRO CYCLE LAB OFFICIAL =====")
           print("Macro date:", s["date"])
           print("Regime:", s["macro_regime"])
+          print("Official score:", s["official_score"])
           print("Action:", s["action_label_zh"])
           print("Confidence:", s["confidence"])
           print(
@@ -50,7 +63,21 @@ jobs:
           )
           PY
 
-      - name: Upload refreshed data
+      - name: Commit refreshed data to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f data/processed/taiwan_macro_inputs.csv
+
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "Update Taiwan macro official data"
+            git push
+          fi
+
+      - name: Upload backup artifact
         uses: actions/upload-artifact@v4
         with:
           name: macro-cycle-lab-official-refresh
