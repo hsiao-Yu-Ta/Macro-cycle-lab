@@ -492,7 +492,7 @@ def render_market_page(market: str, settings: dict):
     _inject_css()
     label = "美股模型" if market == "US" else "台股模型"
     st.subheader(label)
-    st.caption("先看四象限與燈號；詳細分數與權重放到頁面下方。")
+    st.caption("四象限判斷景氣、3M負責預警、6M負責確認；Macro不作為核心持股賣出訊號。")
 
     try:
         data, status, revised, original = _run_market(market, settings)
@@ -536,7 +536,7 @@ def render_market_page(market: str, settings: dict):
               <div>景氣水準　{score_icon} <b>{score_lamp}</b></div>
               <div>3M 預警　 {mom_icon} <b>{mom_lamp}</b></div>
               <div>6M 確認　 <b>{fs_icon} {fs_name}</b></div>
-              <div>模型建議曝險　<b>{exp:.0%}</b></div>
+              <div>核心持股　　 <b>長期持有</b></div>
             </div>
             """,
             unsafe_allow_html=True
@@ -546,10 +546,41 @@ def render_market_page(market: str, settings: dict):
     core = pd.DataFrame([
         _lamp_row("景氣水準", score_lamp, "模型綜合水準"),
         _lamp_row("景氣動能", mom_lamp, "3個月變化"),
-        _lamp_row("建議曝險", "正向" if exp >= .65 else ("中性" if exp >= .35 else "負向"),
-                  f"目前模型曝險 {exp:.0%}"),
+        _lamp_row("核心持股", "正向", "Macro不作為核心部位賣出訊號"),
     ])
     st.dataframe(core, hide_index=True, use_container_width=True)
+
+    if market == "US":
+        st.markdown("### QQQ 投資決策")
+        px = pd.to_numeric(frame["PRICE"], errors="coerce").dropna()
+        if len(px):
+            qqq_dd = float((px.iloc[-1] / px.cummax().iloc[-1] - 1) * 100)
+            dd_icon, dd_lamp = _drawdown_status(qqq_dd)
+            fs_name, fs_icon, fs_note = _fast_slow_momentum_status(frame["SCORE"])
+
+            if qqq_dd > -15:
+                qqq_action = "正常定投｜熊市預備金暫不啟動"
+            elif qqq_dd > -20:
+                qqq_action = "觀察／第一小筆｜Macro作為加碼速度參考"
+            elif qqq_dd > -25:
+                qqq_action = "分批加碼｜3M預警＋6M確認提高決策權"
+            elif qqq_dd > -30:
+                qqq_action = "積極分批｜價格機會與Macro共同判斷"
+            elif qqq_dd > -35:
+                qqq_action = "提高加碼｜價格權重明顯提高"
+            else:
+                qqq_action = "深熊強制分批｜Macro不得否決"
+
+            st.success(
+                f"**核心持股：🟢 長期持有**\n\n"
+                f"**QQQ 回撤：{dd_icon} {qqq_dd:.1f}%（{dd_lamp}）**\n\n"
+                f"**3M／6M：{fs_icon} {fs_name}**\n\n"
+                f"**目前行動：{qqq_action}**"
+            )
+            st.caption(
+                "V4回測用途：Macro用來調整15%熊市預備金的投入速度，"
+                "不因『擴張降溫／衰退』直接賣出85%核心持股。"
+            )
 
     st.markdown("### 關鍵指標燈號")
     rows = []
@@ -841,6 +872,25 @@ def render_backtest_page(settings: dict):
                   "Sharpe比較"),
     ])
     st.dataframe(signals, hide_index=True, use_container_width=True)
+
+    if market == "US":
+        st.markdown("### QQQ V4 驗證結論")
+        st.dataframe(
+            pd.DataFrame([
+                ["Buy & Hold QQQ", "8.88%", "0.358", "-81.1%", "長期報酬最高"],
+                ["固定 85/15", "8.36%", "0.358", "-74.5%", "回撤控制較佳"],
+                ["只看回撤", "8.10%", "0.332", "-79.6%", "基準加碼法"],
+                ["Macro 3M", "8.17%", "0.336", "-79.2%", "有改善"],
+                ["Macro 3M＋6M", "8.20%", "0.338", "-79.2%", "Macro候選中最佳"],
+                ["Hybrid V4", "8.14%", "0.335", "-79.6%", "未優於3M＋6M"],
+            ], columns=["策略", "CAGR", "Sharpe", "最大回撤", "判讀"]),
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.info(
+            "正式採用：3M＝預警、6M＝確認；Macro調整熊市預備金投入速度。"
+            "Buy & Hold長期報酬仍較高，因此不把Macro當成核心持股賣出模型。"
+        )
 
     with st.expander("完整回測數值"):
         rows = [{"策略": k, **v} for k, v in metrics.items()]
