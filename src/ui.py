@@ -134,12 +134,31 @@ def _drawdown_status(dd: float):
 
 def _phase_from_xy(x: float, y: float):
     if x >= 0 and y >= 0:
-        return "擴張", "景氣水準偏強、動能仍向上"
+        return "強勢擴張", "景氣水準偏強、短期動能仍向上"
     if x >= 0 and y < 0:
-        return "惡化", "景氣水準仍偏強，但動能轉弱"
+        return "擴張降溫", "景氣水準仍偏強，只是短期動能轉弱；不是賣出訊號"
     if x < 0 and y < 0:
-        return "衰退", "景氣水準偏弱、動能仍下滑"
-    return "復甦／築底", "景氣仍偏弱，但動能已開始回升"
+        return "衰退惡化", "景氣水準偏弱、短期動能仍下滑"
+    return "復甦改善", "景氣水準仍偏弱，但短期動能已開始回升"
+
+
+
+def _fast_slow_momentum_status(score_series: pd.Series):
+    """3M=預警、6M=確認。回傳狀態名稱、燈號、說明。"""
+    s = pd.to_numeric(score_series, errors="coerce").dropna()
+    if len(s) < 7:
+        return "資料不足", "⚪", "成熟資料不足，無法同時計算3M與6M動能。"
+
+    m3 = float(s.iloc[-1] - s.iloc[-4])
+    m6 = float(s.iloc[-1] - s.iloc[-7])
+
+    if m3 >= 0 and m6 >= 0:
+        return "趨勢全面改善", "🟢", "3M預警與6M確認都向上，景氣動能一致改善。"
+    if m3 < 0 and m6 >= 0:
+        return "短期降溫／中期仍強", "🟡", "3M轉弱，但6M仍向上；屬降溫預警，不是趨勢反轉。"
+    if m3 >= 0 and m6 < 0:
+        return "可能築底反轉", "🟡", "3M先轉上，但6M尚未確認；可視為早期改善訊號。"
+    return "趨勢確認轉弱", "🔴", "3M與6M都向下，景氣動能弱化已獲中期確認。"
 
 
 def _quadrant_chart(df: pd.DataFrame, x_col: str, y_col: str, title: str):
@@ -173,13 +192,13 @@ def _quadrant_chart(df: pd.DataFrame, x_col: str, y_col: str, title: str):
             hovertemplate="月份 %{text}<br>景氣水準 %{x:.2f}<br>3M動能 %{y:.2f}<extra></extra>",
         ))
 
-    fig.add_annotation(x=lim*.58, y=lim*.72, text="<b>擴張</b><br>水準強、動能升",
+    fig.add_annotation(x=lim*.58, y=lim*.72, text="<b>強勢擴張</b><br>水準強、3M動能升",
                        showarrow=False, font=dict(size=16))
-    fig.add_annotation(x=-lim*.58, y=lim*.72, text="<b>復甦／築底</b><br>水準弱、動能升",
+    fig.add_annotation(x=-lim*.58, y=lim*.72, text="<b>復甦改善</b><br>水準弱、3M動能升",
                        showarrow=False, font=dict(size=15))
-    fig.add_annotation(x=-lim*.58, y=-lim*.72, text="<b>衰退</b><br>水準弱、動能降",
+    fig.add_annotation(x=-lim*.58, y=-lim*.72, text="<b>衰退惡化</b><br>水準弱、3M動能降",
                        showarrow=False, font=dict(size=16))
-    fig.add_annotation(x=lim*.58, y=-lim*.72, text="<b>惡化</b><br>水準強、動能降",
+    fig.add_annotation(x=lim*.58, y=-lim*.72, text="<b>擴張降溫</b><br>水準強、3M動能降",
                        showarrow=False, font=dict(size=16))
 
     fig.update_xaxes(range=[-lim, lim], zeroline=True, zerolinewidth=1,
@@ -237,12 +256,12 @@ def _reference_tables():
         ], columns=["構成", "總權重", "來源"]), hide_index=True, use_container_width=True)
 
         st.markdown("### Y 軸：景氣動能")
-        st.write("Y = X 的 3 個月變化（本月正式分數 − 3 個月前正式分數）。")
+        st.write("四象限 Y 軸仍採 3M 變化作『預警』；另外用 6M 變化作『趨勢確認』，避免單一3M轉弱被誤判成賣出訊號。")
         st.dataframe(pd.DataFrame([
-            ["擴張", "X ≥ 0", "Y ≥ 0"],
-            ["惡化", "X ≥ 0", "Y < 0"],
-            ["衰退", "X < 0", "Y < 0"],
-            ["復甦／築底", "X < 0", "Y ≥ 0"],
+            ["強勢擴張", "X ≥ 0", "3M Y ≥ 0"],
+            ["擴張降溫", "X ≥ 0", "3M Y < 0"],
+            ["衰退惡化", "X < 0", "3M Y < 0"],
+            ["復甦改善", "X < 0", "3M Y ≥ 0"],
         ], columns=["象限", "X 景氣水準", "Y 3M動能"]), hide_index=True, use_container_width=True)
 
     with tabs[1]:
@@ -488,8 +507,10 @@ def render_market_page(market: str, settings: dict):
 
     latest = frame.iloc[-1]
     frame["QUAD_Y"] = frame["SCORE"].diff(3)
+    frame["QUAD_Y6"] = frame["SCORE"].diff(6)
     latest_y = float(frame["QUAD_Y"].iloc[-1]) if pd.notna(frame["QUAD_Y"].iloc[-1]) else 0.0
     phase, phase_note = _phase_from_xy(float(latest["SCORE"]), latest_y)
+    fs_name, fs_icon, fs_note = _fast_slow_momentum_status(frame["SCORE"])
     score_icon, score_lamp = _status_from_value(float(latest["SCORE"]))
     mom_icon, mom_lamp = _status_from_value(float(latest["MOMENTUM_3M"]))
     exp = float(latest["EXPOSURE"])
@@ -513,7 +534,8 @@ def render_market_page(market: str, settings: dict):
               <div>{phase_note}</div>
               <hr>
               <div>景氣水準　{score_icon} <b>{score_lamp}</b></div>
-              <div>3M 動能　 {mom_icon} <b>{mom_lamp}</b></div>
+              <div>3M 預警　 {mom_icon} <b>{mom_lamp}</b></div>
+              <div>6M 確認　 <b>{fs_icon} {fs_name}</b></div>
               <div>模型建議曝險　<b>{exp:.0%}</b></div>
             </div>
             """,
@@ -567,7 +589,7 @@ def render_market_page(market: str, settings: dict):
 
     with st.expander("燈號判定方式"):
         st.write("模型分數 ≥ +0.10：🟢 正向；-0.10～+0.10：🟡 中性；≤ -0.10：🔴 負向。")
-        st.write("四象限：X = 模型景氣水準；Y = X 的3個月變化。")
+        st.write("四象限：X = 模型景氣水準；Y = 3M預警。6M另作趨勢確認，避免把短期降溫誤認為賣出訊號。")
 
 
 def render_taiwan_official_page(settings: dict):
@@ -610,9 +632,13 @@ def render_taiwan_official_page(settings: dict):
 
     hist_q = hist.dropna(subset=["official_score"]).copy()
     hist_q["Q_Y"] = hist_q["official_score"].diff(3)
+    hist_q["Q_Y6"] = hist_q["official_score"].diff(6)
     latest_q = hist_q.dropna(subset=["Q_Y"]).iloc[-1]
     quadrant_name, quadrant_note = _phase_from_xy(
         float(latest_q["official_score"]), float(latest_q["Q_Y"])
+    )
+    fast_slow_name, fast_slow_icon, fast_slow_note = _fast_slow_momentum_status(
+        hist_q["official_score"]
     )
 
     c1, c2 = st.columns([1.45, 1])
@@ -621,7 +647,10 @@ def render_taiwan_official_page(settings: dict):
             _quadrant_chart(hist_q, "official_score", "Q_Y", "景氣四象限｜最近12個成熟月份"),
             use_container_width=True
         )
-        st.success(f"目前位置：**{quadrant_name}**｜{quadrant_note}")
+        st.info(
+            f"**景氣狀態：{quadrant_name}**｜{quadrant_note}\n\n"
+            f"**快慢動能：{fast_slow_icon} {fast_slow_name}**｜{fast_slow_note}"
+        )
     with c2:
         st.markdown(
             f"""
@@ -642,6 +671,32 @@ def render_taiwan_official_page(settings: dict):
             """,
             unsafe_allow_html=True
         )
+
+    st.markdown("### 投資行動與景氣狀態分開看")
+    if action == "NORMAL_DCA":
+        st.success(
+            "🟢 **目前投資行動：持有＋正常定投**｜景氣即使出現短期降溫，"
+            "只要6M趨勢與市場確認未同步轉弱，就不把它解讀成賣出訊號。"
+        )
+    elif action in ("OBSERVE", "SMALL_ADD"):
+        st.warning(
+            f"🟡 **目前投資行動：{ACTION_LABELS[action]}**｜這代表提高警覺或小額分批，"
+            "不是因景氣降溫就全面減碼。"
+        )
+    else:
+        st.warning(
+            f"🟠 **目前投資行動：{ACTION_LABELS[action]}**｜此動作主要由回撤深度＋Macro狀態共同觸發，"
+            "不是單靠四象限名稱決定。"
+        )
+
+    st.markdown("### 3M 預警 × 6M 確認")
+    fast_slow_table = pd.DataFrame([
+        ["3M ↑", "6M ↑", "🟢 趨勢全面改善", "可視為景氣動能一致改善"],
+        ["3M ↓", "6M ↑", "🟡 短期降溫／中期仍強", "預警，不視為賣出訊號"],
+        ["3M ↑", "6M ↓", "🟡 可能築底反轉", "早期改善，等待6M確認"],
+        ["3M ↓", "6M ↓", "🔴 趨勢確認轉弱", "才視為景氣動能真正惡化"],
+    ], columns=["3M預警", "6M確認", "判讀", "投資語意"])
+    st.dataframe(fast_slow_table, hide_index=True, use_container_width=True)
 
     st.markdown("### 四大方向燈號")
     lamps = pd.DataFrame([
