@@ -1,0 +1,54 @@
+name: QQQ Macro Validation V4
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f requirements_macro_validation.txt ]; then
+            pip install -r requirements_macro_validation.txt
+          fi
+          pip install openpyxl
+
+      - name: Run QQQ formal validation V4
+        run: python validate_qqq_v4.py
+
+      - name: Show QQQ V4 final results
+        run: |
+          echo "===== STRATEGY METRICS ====="
+          cat data/processed/qqq_v4_strategy_metrics.csv
+          echo ""
+          echo "===== FINAL SUMMARY ====="
+          cat data/processed/qqq_v4_final_summary.csv
+          echo ""
+          echo "===== CRISIS REVIEW ====="
+          cat data/processed/qqq_v4_crisis_review.csv
+
+      - name: Upload QQQ V4 results
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqq-macro-validation-v4
+          path: |
+            data/processed/qqq_v4_monthly_signals.csv
+            data/processed/qqq_v4_strategy_metrics.csv
+            data/processed/qqq_v4_crisis_review.csv
+            data/processed/qqq_v4_drawdown_forward_returns.csv
+            data/processed/qqq_v4_leave_one_crisis_out.csv
+            data/processed/qqq_v4_final_summary.csv
+          retention-days: 30
